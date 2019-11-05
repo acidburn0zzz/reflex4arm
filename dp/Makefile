@@ -71,7 +71,7 @@ CFLAGS += -DENABLE_KSTATS
 endif
 
 SRCS =
-DIRS = core drivers lwip net
+DIRS = core drivers lwip net apps
 
 define register_dir
 SRCS += $(patsubst %, $(1)/%, $(2))

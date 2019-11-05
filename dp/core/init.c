@@ -871,7 +871,11 @@ int main(int argc, char *argv[])
 
 	// ret = echoserver_main(argc - args_parsed, &argv[args_parsed]);
 	if (argc > 1)
-		ret = reflex_client_main(argc - args_parsed, &argv[args_parsed]);
+		#ifndef SERVERLESS_ENABLE
+			ret = reflex_client_main(argc - args_parsed, &argv[args_parsed]);
+		#elif
+			ret = serverless_client_main(argc - args_parsed, &argv[args_parsed]);
+		#endif
 	else
 		ret = reflex_server_main(argc - args_parsed, &argv[args_parsed]);
 	

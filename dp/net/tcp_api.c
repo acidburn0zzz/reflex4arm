@@ -188,12 +188,13 @@ static void recv_a_pbuf(struct tcpapi_pcb *api, struct pbuf *p)
 		pkt->pkt_len = p->len; // repurpose len for recv_done 
 		pkt->data_len = p->len; // repurpose len for recv_done 
 
-		if (pkt->ol_flags & PKT_RX_TIMESTAMP) {
+
+		rx_ol_flags = pkt->ol_flags;
+		if (rx_ol_flags & PKT_RX_TIMESTAMP) {
 			printf("A new packet arrived at %"PRIu64".\n", pkt->timestamp);
 		}
 		
 		#ifdef TCP_INPUT_DEBUG
-		rx_ol_flags = pkt->ol_flags;
 
 		if ((rx_ol_flags & PKT_RX_IP_CKSUM_MASK) == PKT_RX_IP_CKSUM_BAD)
 			printf("Got an IP packet with bad chksum.\n");
@@ -729,7 +730,7 @@ static struct eth_fg *get_port_with_fdir(struct ip_tuple *id)
 	filter.input.flow_type = RTE_ETH_FLOW_NONFRAG_IPV4_TCP;
 	filter.input.flow.tcp4_flow.ip.src_ip = hton32(id->dst_ip); 
 	filter.input.flow.tcp4_flow.ip.dst_ip = hton32(id->src_ip); // tos, ttl?
-	filter.input.flow.tcp4_flow.src_port = hton16(0); 
+	filter.input.flow.tcp4_flow.src_port = hton16(id->dst_port); 
 	filter.input.flow.tcp4_flow.dst_port = hton16(id->src_port);
 	filter.soft_id = 0;
 	filter.action.rx_queue = percpu_get(cpu_id); //FIXME: or should this always be 0? 

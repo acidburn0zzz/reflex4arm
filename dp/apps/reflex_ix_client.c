@@ -86,7 +86,7 @@
 #define MAX_LATENCY 2000
 // #define MAX_IOPS 1750000 // 1k
 // #define MAX_IOPS 1120000 // 4k
-#define MAX_IOPS 2900000 // net
+#define MAX_IOPS 4000000 // net
 #define NUM_TESTS 11 //16
 #define DURATION 1
 #define MAX_NUM_MEASURE MAX_IOPS * DURATION
@@ -135,7 +135,7 @@ static long ns_size = 0xE8E0DB6000;	// Samsung a801
 
 
 static struct mempool_datastore nvme_usr_datastore;
-static const int outstanding_reqs = 4096 * 8;
+static const int outstanding_reqs = 512; //4096 * 8;
 static volatile int started_conns = 0;
 static pthread_barrier_t barrier;
 static int req_size = 2; // in lbas, 1024 bytes
@@ -410,11 +410,12 @@ static void receive_req(struct pp_conn *conn)
 			}
 
 			guide_IOPS = nr_threads * (NUM_MEASURE * usecs) / ((rdtsc() - phase_start) / cycles_per_us);
-			printf("RqIOPS:\t IOPS:\t Avg:\t 10th:\t 20th:\t 30th:\t 40th:\t 50th:\t 60th:\t 70th:\t 80th:\t 90th:\t 95th:\t 99th:\t max:\t missed:\n");
-			printf("%lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\t %lu\n",
+			// "RqIOPS:\t GdIOPS:\t Avg:\t 10th:\t 20th:\t 30th:\t 40th:\t 50th:\t 60th:\t 70th:\t 80th:\t 90th:\t 95th:\t 99th:\t max:\t missed:\n"
+			printf("[%d] %lu(%lu)\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\t%lu\n",
+				   percpu_get(cpu_id),
 			       target_IOPS,
 			       guide_IOPS,
-			       avg/num_measured_reads, 
+			       avg/num_measured_reads,
 			       get_percentile(measurements, num_measured_reads, 10),
 			       get_percentile(measurements, num_measured_reads, 20),
 			       get_percentile(measurements, num_measured_reads, 30),
@@ -749,10 +750,8 @@ static void pp_release(struct ixev_ctx *ctx)
 {
 	struct pp_conn *conn = container_of(ctx, struct pp_conn, ctx);
 	conn_opened--;
-	#if CLI_DEBUG
 	if(conn_opened==0)
 		printf("Tid: %lx All connections released handle %lx open conns still %i\n", pthread_self(), conn->ctx.handle, conn_opened);
-	#endif
 	mempool_free(&pp_conn_pool, conn);
 	terminate = true;
 	running = false;
@@ -914,72 +913,72 @@ int reflex_client_main(int argc, char *argv[])
 
         while ((opt = getopt(argc, argv, "s:p:w:T:i:r:S:R:P:d:t:h")) != -1) {
                 switch (opt) {
-			case 's' :
-				ip = malloc(sizeof(char) * strlen(optarg));
-				strcpy(ip, optarg);
-				break;
-			case 'p' :
-				port = atoi(optarg);
-				break;
-            case 'w' :
-				if (strcmp(optarg, "seq") == 0)
-					sequential = 1;
-				else if (strcmp(optarg, "rand") == 0)
-					sequential = 0;
-				else {
-					sequential = 0;
-					printf("WARNING: invalid workload type, use random by default\n");
-				}
-				break;
-                        case 'T' :
-                                nr_threads = atoi(optarg);
-                                break;
-                        case 'i' :
-                                global_target_IOPS = atoi(optarg);
-                                break;
-                        case 'r' :
-                                read_percentage = atoi(optarg);
-                                break;
-                        case 'S' :
-                                SWEEP = atoi(optarg);
-                                break;
-                        case 'R' :
-                                req_size_bytes = atoi(optarg);
-                                if (req_size_bytes % ns_sector_size != 0){
-                                        printf("WARNING: request size should be multiple of sector size\n");
-                                }
-								req_size = req_size_bytes / ns_sector_size;
-                                break;
-                        case 'P' :
-                                preconditioning = atoi(optarg);
-                                break;
-                        case 'd' :
-                                qdepth = atoi(optarg);
-                                break;
-                        case 't' :
-                                run_time = atoi(optarg);
-                                break;
-			case 'h' :
-				fprintf(stderr, "\nUsage: \n"
-					"sudo ./dp/ix\n"
-					"to run ReFlex server, no parameters required\n"
-					"to run ReFlex client, set the following options:\n"
-					"-s  server IP address\n"
-					"-p  server port number\n"
-					"-w  workload type [seq/rand] (default=rand)\n"
-					"-T  number of threads (default=1)\n"
-					"-i  target IOPS for open-loop test (default=50000)\n"
-					"-r  percentage of read requests (default=100)\n"
-					"-S  sweep multiple target IOPS for open-loop test (default=1)\n"
-					"-R  request size in bytes (default=1024)\n"
-					"-P  precondition (default=0)\n"
-					"-d  queue depth for closed-loop test (default=0)\n"
-					"-t  execution time in seconds for closed-loop test (default=0)\n"
-				);
-				exit(1);
-                        default:
-                                fprintf(stderr, "invalid command option\n");
-                                exit(1);
+					case 's' :
+						ip = malloc(sizeof(char) * strlen(optarg));
+						strcpy(ip, optarg);
+						break;
+					case 'p' :
+						port = atoi(optarg);
+						break;
+					case 'w' :
+						if (strcmp(optarg, "seq") == 0)
+							sequential = 1;
+						else if (strcmp(optarg, "rand") == 0)
+							sequential = 0;
+						else {
+							sequential = 0;
+							printf("WARNING: invalid workload type, use random by default\n");
+						}
+						break;
+                    case 'T' :
+                            nr_threads = atoi(optarg);
+                            break;
+                    case 'i' :
+                            global_target_IOPS = atoi(optarg);
+                            break;
+                    case 'r' :
+                            read_percentage = atoi(optarg);
+                            break;
+                    case 'S' :
+                            SWEEP = atoi(optarg);
+                            break;
+                    case 'R' :
+                            req_size_bytes = atoi(optarg);
+                            if (req_size_bytes % ns_sector_size != 0){
+                                    printf("WARNING: request size should be multiple of sector size\n");
+                            }
+							req_size = req_size_bytes / ns_sector_size;
+                            break;
+                    case 'P' :
+                            preconditioning = atoi(optarg);
+                            break;
+                    case 'd' :
+                            qdepth = atoi(optarg);
+                            break;
+                    case 't' :
+                            run_time = atoi(optarg);
+                            break;
+					case 'h' :
+						fprintf(stderr, "\nUsage: \n"
+							"sudo ./dp/ix\n"
+							"to run ReFlex server, no parameters required\n"
+							"to run ReFlex client, set the following options:\n"
+							"-s  server IP address\n"
+							"-p  server port number\n"
+							"-w  workload type [seq/rand] (default=rand)\n"
+							"-T  number of threads (default=1)\n"
+							"-i  target IOPS for open-loop test (default=50000)\n"
+							"-r  percentage of read requests (default=100)\n"
+							"-S  sweep multiple target IOPS for open-loop test (default=1)\n"
+							"-R  request size in bytes (default=1024)\n"
+							"-P  precondition (default=0)\n"
+							"-d  queue depth for closed-loop test (default=0)\n"
+							"-t  execution time in seconds for closed-loop test (default=0)\n"
+						);
+						exit(1);
+                    default:
+                        fprintf(stderr, "invalid command option\n");
+                        exit(1);
                 }
         }
 
@@ -1013,8 +1012,9 @@ int reflex_client_main(int argc, char *argv[])
 
 		timer_calibrate_tsc();
 		
-		ip_tuple[i]->dst_port = port + i; // mutli-thread
-		ip_tuple[i]->src_port = port;
+		// ip_tuple[i]->dst_port = port + i/2; // mutli-thread
+		ip_tuple[i]->dst_port = port + i;
+		ip_tuple[i]->src_port = port + i;
 		printf("Connecting to port: %i\n", port + i);
 	}
 
