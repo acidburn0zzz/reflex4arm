@@ -67,6 +67,7 @@
 #include <ixev.h>
 #include <ix/mempool.h>
 #include <ix/list.h>
+#include <ix/cfg.h>
 #include <ix/timer.h>
 
 #include "reflex.h" 
@@ -84,51 +85,18 @@
 
 #define MAX_SECTORS_PER_ACCESS 64
 #define MAX_LATENCY 2000
-// #define MAX_IOPS 1750000 // 1k
-// #define MAX_IOPS 1120000 // 4k
-#define MAX_IOPS 4000000 // net
-#define NUM_TESTS 11 //16
+#define MAX_IOPS 2000000
+#define NUM_TESTS 8
 #define DURATION 1
 #define MAX_NUM_MEASURE MAX_IOPS * DURATION
-// static const unsigned long sweep[NUM_TESTS] = {1000, 1100, 1200, 1300, 1400};
 
-// static const unsigned long sweep[NUM_TESTS] = {	 100000, 200000, 400000, 600000, 800000,
-// 												1000000, 1200000, 1400000, 1500000, 1600000,
-// 												1620000, 1640000, 1660000, 1680000, 1690000,
-// 												1700000, 1710000, 1720000, 1730000, 1740000,
-// 												1742000, 1742400, 1742800, 1732000, MAX_IOPS}; // 1k rand with 4 threads
-// static const unsigned long sweep[NUM_TESTS] = {	 /*100000, 200000, 300000, 400000, 500000,
-// 												600000, 700000, 800000, 900000, 1000000,
-// 												1020000, 1040000, 1060000, 1080000, 1100000,*/
-// 												1110000, 1120000, 1130000, 11400000, 11500000,};
-// 												// 1112000, 1114000, 1116000, 1118000, MAX_IOPS}; // 4k rand with 4 threads
-static const unsigned long sweep[NUM_TESTS] = {	/*00000, 400000, 600000, 800000, 1000000,
-												1200000, 1400000, 1600000, 1800000, 2000000,
-												2200000, 2400000, 2600000, 2800000, */ 2820000,
-												2840000, 2860000, 2880000, 2882000, 2884000,
-												2886000, 2888000, 2889000, 2890000, MAX_IOPS}; // net perf
-
-// static const unsigned long sweep[NUM_TESTS] = {500000, 500000, 500000,
-// 					       500000, 500000, 500000, 500000, 500000, 500000,
-// 					       500000, 500000, 500000, 500000, 500000, 500000,
-// 					       500000, 500000, 500000, 500000, 500000,
-// 						   500000, 500000, 500000, 500000, 500000,
-// 						   500000, 500000, 500000, 500000, 500000,
-// 						   500000, 500000, 500000, 500000, 500000,
-// 						   500000, 500000, 500000, 500000, 500000}; // for 1k rand
-
-/*
-static const unsigned long sweep[NUM_TESTS] = {1000, 10000, 25000, 30000, //100000,
-					       35000, 40000, 50000, 60000,
-					       70000, 80000, 90000, 100000,
-					       200000, 250000, 900000, MAX_IOPS};
-*/
+static const unsigned long sweep[NUM_TESTS] = { 100000, 200000, 300000, 400000,
+												500000, 600000, 700000, 800000};
 
 //FIXEME: hard-coding sector size for now
 static int ns_sector_size = 512;
 static int log_ns_sector_size = 9;
-//FIXME: hard-coding namespace size for device tested
-static long ns_size = 0xE8E0DB6000;	// Samsung a801
+// static long ns_size = 0xE8E0DB6000;	// Samsung a801
 // static long ns_size = 0x37E3EE56000;	// Samsung 1721
 // static long ns_size = 0x1749a956000;    // Samsung 1725 
 // static long ns_size = 0x5d27216000;  // Intel P3600 400GB capacity 
@@ -231,11 +199,12 @@ struct pp_conn {
 	size_t tx_sent;
 	bool rx_pending;			//is there a ReFlex req currently being received/sent
 	bool tx_pending;
+	bool alive;
 	int nvme_pending;
 	long in_flight_pkts;
 	long sent_pkts;
 	long list_len;
-	bool receive_loop;
+	// bool receive_loop;
 	unsigned long last_count; //aka seq_count when verify = 0
 	struct list_head pending_requests;
 	long nvme_fg_handle; 		//nvme flow group handle
@@ -273,7 +242,10 @@ static void receive_req(struct pp_conn *conn)
 				if (ret != -EAGAIN) {
 					if(!conn->nvme_pending) {
 						printf("Connection close 6\n");
-						ixev_close(&conn->ctx);
+						if (conn->alive) {
+							ixev_close(&conn->ctx);
+							conn->alive = false;
+						}
 					}
 				}
 				break; // exception
@@ -302,7 +274,10 @@ static void receive_req(struct pp_conn *conn)
 					assert(0);
 					if(!conn->nvme_pending) {
 						printf("Connection close 7\n");
-						ixev_close(&conn->ctx);
+						if (conn->alive) {
+							ixev_close(&conn->ctx);
+							conn->alive = false;
+						}
 					}
 				}
 				break; // exception
@@ -330,7 +305,10 @@ static void receive_req(struct pp_conn *conn)
 		}
 		else {
 			printf("Received unsupported command, closing connection\n");
-			ixev_close(&conn->ctx);
+			if (conn->alive) {
+				ixev_close(&conn->ctx);
+				conn->alive = false;
+			}
 			return;  // exception
 		}
 
@@ -485,13 +463,16 @@ int send_client_req(struct nvme_req *req)
 		while (conn->tx_sent < sizeof(BINARY_HEADER)) {
 			ret = ixev_send(&conn->ctx, &conn->data_send[conn->tx_sent],
 					sizeof(BINARY_HEADER) - conn->tx_sent);
-			if (ret == -EAGAIN){
+			if (ret == -EAGAIN || ret == -ENOBUFS){
 				return -1;
-			}
-			if (ret < 0) {
+			} else if (ret < 0) {
+				printf("ixev_send - ret is %d.\n", ret);
 				if(!conn->nvme_pending) {
-					printf("Connection close 2\n");
-					ixev_close(&conn->ctx);
+					printf("[%d] Connection close 2\n", percpu_get(cpu_id));
+					if (conn->alive) {
+						ixev_close(&conn->ctx);
+						conn->alive = false;
+					}
 				}
 				return -2;
 				ret = 0;
@@ -513,11 +494,14 @@ int send_client_req(struct nvme_req *req)
 			ret = ixev_send_zc(&conn->ctx, &req->buf[conn->tx_sent],
 					   req->lba_count * ns_sector_size - conn->tx_sent); 
 			if (ret < 0) {
-				if (ret == -EAGAIN)
+				if (ret == -EAGAIN || ret == -ENOBUFS)
 					return -2;
 				if(!conn->nvme_pending) {
 					printf("Connection close 3\n");
-					ixev_close(&conn->ctx);
+					if (conn->alive) {
+						ixev_close(&conn->ctx);
+						conn->alive = false;
+					}
 				}
 				return -2;
 			}
@@ -551,7 +535,7 @@ int send_pending_client_reqs(struct pp_conn *conn)
 			conn->list_len--;
 		}
 		else
-			return ret;//sent_reqs;
+			return ret;
 	}
 	return sent_reqs;
 }
@@ -562,6 +546,7 @@ void send_handler(void * arg, int num_req)
 	struct ixev_ctx *ctx = (struct ixev_ctx *)arg;
 	struct pp_conn *conn = container_of(ctx, struct pp_conn, ctx);
 	unsigned long now;
+	unsigned long ns_size = CFG.ns_sizes[0];
 	int ssents = 0;
 
 	int send_cond;
@@ -695,8 +680,6 @@ void send_handler(void * arg, int num_req)
 			}
 		}
 
-
-		// req->sent_time = rdtsc(); // duplicate?
 		last_send = now;
 		sent++;
 
@@ -725,7 +708,10 @@ static void main_handler(struct ixev_ctx *ctx, unsigned int reason)
 	}
 	else if(reason == IXEVHUP) {
 		printf("Connection close 5\n");
-		ixev_close(ctx);
+		if (conn->alive) {
+			ixev_close(&conn->ctx);
+			conn->alive = false;
+		}
 		return;
 	}
 	receive_req(conn);
@@ -774,6 +760,9 @@ static void* receive_loop(void *arg)
 	int ret, i;
 	int flags;
 	int num_tests;
+	unsigned long ns_size = CFG.ns_sizes[0];
+
+	printf("ns_size is 0x%lx\n", ns_size);
 
 	tid = *(int *)arg;
 	conn_opened = 0;	
@@ -819,7 +808,7 @@ static void* receive_loop(void *arg)
 	conn->in_flight_pkts = 0x0UL;
 	conn->sent_pkts = 0x0UL;
 	conn->list_len = 0x0UL;
-	conn->receive_loop = true;
+	// conn->receive_loop = true;
 	srand(rdtsc());
 	conn->last_count = rand() % (ns_size >> log_ns_sector_size); // random start, are they same for different threads?
 	conn->last_count = conn->last_count & ~7; // align
@@ -827,6 +816,7 @@ static void* receive_loop(void *arg)
 	ixev_ctx_init(&conn->ctx);
 	
 	conn->nvme_fg_handle = 0; //set to this for now
+	conn->alive = true;
 
 	flags = fcntl(STDIN_FILENO, F_GETFL, 0);
 	fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
@@ -884,7 +874,13 @@ static void* receive_loop(void *arg)
 		//---
 	}
 	running = true;
-	ixev_close(&conn->ctx);
+	if (conn->alive) {
+		printf("[%d] Connection normally closed.\n", percpu_get(cpu_id));
+		ixev_close(&conn->ctx);
+		conn->alive = false;
+	} else {
+		running = false;
+	}
 	
 	while (running)
 		ixev_wait();
@@ -1012,8 +1008,7 @@ int reflex_client_main(int argc, char *argv[])
 
 		timer_calibrate_tsc();
 		
-		// ip_tuple[i]->dst_port = port + i/2; // mutli-thread
-		ip_tuple[i]->dst_port = port + i;
+		ip_tuple[i]->dst_port = port + i; // mutli-thread
 		ip_tuple[i]->src_port = port + i;
 		printf("Connecting to port: %i\n", port + i);
 	}
@@ -1048,17 +1043,6 @@ int reflex_client_main(int argc, char *argv[])
 		return ret;
 	}
 
-    /*
-	sys_spawnmode(true);
-	for (int i = 1; i < nr_threads; i++) {
-		tid[i] = i;
-		if (pthread_create(&thread[i], NULL, receive_loop, &tid[i])) {
-			fprintf(stderr, "failed to spawn thread %d\n", i);
-			exit(-1);
-		}
-	}
-	*/
-
 	for (i = 1; i < nr_cpu; i++) {
 		//ret = pthread_create(&tid, NULL, start_cpu, (void *)(unsigned long) i);
 		log_info("rte_eal_remote_launch...receive_loop\n");
@@ -1076,12 +1060,6 @@ int reflex_client_main(int argc, char *argv[])
 	tid[0] = 0;
 
 	receive_loop(&tid[0]);
-	/*
-	for (int i = 1; i < nr_threads; i++) {
-		pthread_join(thread[i], NULL);
-	}
-	printf("joined. Total IOPS: %lu\n", iops);
-	*/
 	return 0;
 }
 
