@@ -808,12 +808,12 @@ struct eth_fg *get_local_port_and_set_queue(struct ip_tuple *id)
 		printf("WARNING: only 1 ethernet port is used\n");
 		//panic("tcp_connect not implemented for bonded interfaces\n");
 
-	if (!percpu_get(local_port))
-		percpu_get(local_port) = RTE_PER_LCORE(cpu_id) * PORTS_PER_CPU;
+	// if (!percpu_get(local_port))
+	// 	percpu_get(local_port) = RTE_PER_LCORE(cpu_id) * PORTS_PER_CPU;
 
-	percpu_get(local_port)++;
+	// percpu_get(local_port)++;
 
-	id->src_port = percpu_get(local_port);
+	// id->src_port = percpu_get(local_port);
 	
 	fg = get_port_with_fdir(id);
 	if (fg){

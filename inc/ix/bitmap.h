@@ -60,28 +60,28 @@
 
 #include <string.h>
 
+#include <asm/cpu.h>
 #include <ix/stddef.h>
 
-#define BITS_PER_LONG	(sizeof(long) * 8)
+#define BITS_PER_LONG (sizeof(long) * 8)
 #define BITMAP_LONG_SIZE(nbits) \
-	div_up(nbits, BITS_PER_LONG)
+    div_up(nbits, BITS_PER_LONG)
 
 #define DEFINE_BITMAP(name, nbits) \
-	unsigned long name[BITMAP_LONG_SIZE(nbits)]
+    unsigned long name[BITMAP_LONG_SIZE(nbits)]
 
 typedef unsigned long *bitmap_ptr;
 
-#define BITMAP_POS_IDX(pos)	((pos) / BITS_PER_LONG)
-#define BITMAP_POS_SHIFT(pos)	((pos) & (BITS_PER_LONG - 1))
+#define BITMAP_POS_IDX(pos) ((pos) / BITS_PER_LONG)
+#define BITMAP_POS_SHIFT(pos) ((pos) & (BITS_PER_LONG - 1))
 
 /**
  * bitmap_set - sets a bit in the bitmap
  * @bits: the bitmap
  * @pos: the bit number
  */
-static inline void bitmap_set(unsigned long *bits, int pos)
-{
-	bits[BITMAP_POS_IDX(pos)] |= (1ul << BITMAP_POS_SHIFT(pos));
+static inline void bitmap_set(unsigned long *bits, int pos) {
+    bits[BITMAP_POS_IDX(pos)] |= (1ul << BITMAP_POS_SHIFT(pos));
 }
 
 /**
@@ -89,9 +89,8 @@ static inline void bitmap_set(unsigned long *bits, int pos)
  * @bits: the bitmap
  * @pos: the bit number
  */
-static inline void bitmap_clear(unsigned long *bits, int pos)
-{
-	bits[BITMAP_POS_IDX(pos)] &= ~(1ul << BITMAP_POS_SHIFT(pos));
+static inline void bitmap_clear(unsigned long *bits, int pos) {
+    bits[BITMAP_POS_IDX(pos)] &= ~(1ul << BITMAP_POS_SHIFT(pos));
 }
 
 /**
@@ -101,9 +100,8 @@ static inline void bitmap_clear(unsigned long *bits, int pos)
  *
  * Returns true if the bit is set, otherwise false.
  */
-static inline bool bitmap_test(unsigned long *bits, int pos)
-{
-	return (bits[BITMAP_POS_IDX(pos)] & (1ul << BITMAP_POS_SHIFT(pos))) != 0;
+static inline bool bitmap_test(unsigned long *bits, int pos) {
+    return (bits[BITMAP_POS_IDX(pos)] & (1ul << BITMAP_POS_SHIFT(pos))) != 0;
 }
 
 /**
@@ -112,8 +110,18 @@ static inline bool bitmap_test(unsigned long *bits, int pos)
  * @nbits: the number of total bits
  * @state: if true, all bits are set, otherwise all bits are cleared
  */
-static inline void bitmap_init(unsigned long *bits, int nbits, bool state)
-{
-	memset(bits, state ? 0xff : 0x00, BITMAP_LONG_SIZE(nbits) * sizeof(long));
+static inline void bitmap_init(unsigned long *bits, int nbits, bool state) {
+    memset(bits, state ? 0xff : 0x00, BITMAP_LONG_SIZE(nbits) * sizeof(long));
 }
 
+/**
+ * bitmap_first_zero - find the first zero in a bitmap
+ * @bits: the bitmap
+ */
+static inline int bitmap_first_zero(unsigned long *bits, int nbits) {
+    int i;
+    for (i = 0; i < BITMAP_LONG_SIZE(nbits); i++)
+        if (~bits[i])
+            return longlog2(~bits[i] & (bits[i] + 1)) + i * sizeof(long);
+    return -1;
+}

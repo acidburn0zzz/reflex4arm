@@ -65,6 +65,11 @@
 #define IXEV_RECV_DEPTH	1024*2 //*1 for client
 #define IXEV_SEND_DEPTH	16*2 //*1 for client
 
+#define IXEV_EXIT_FAILURE 1
+#define IXEV_EXIT_SUCCESS 0
+
+#define ixev_exit rte_exit
+
 struct ixev_ctx;
 struct ixev_nvme_ioq_ctx;
 struct ixev_nvme_req_ctx;

@@ -148,15 +148,15 @@ static __thread char* last_req_buf = NULL; // for verification
 static struct mempool_datastore nvme_req_buf_datastore;
 static __thread struct mempool nvme_req_buf_pool;
 
-static inline uint32_t intlog2(const uint32_t x) {
-	uint32_t y;
-	y = log(x)/log(2);
-	// asm ( "\tbsr %1, %0\n"
-	//       : "=r"(y)
-	//       : "r" (x)
-	// 	);
-	return y;
-}
+// static inline uint32_t intlog2(const uint32_t x) {
+// 	uint32_t y;
+// 	y = log(x)/log(2);
+// 	// asm ( "\tbsr %1, %0\n"
+// 	//       : "=r"(y)
+// 	//       : "r" (x)
+// 	// 	);
+// 	return y;
+// }
 
 int
 compare_ul (const void *a, const void *b)

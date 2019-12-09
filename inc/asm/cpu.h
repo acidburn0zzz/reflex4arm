@@ -62,72 +62,110 @@
  * Endianness
  */
 
-#define __LITTLE_ENDIAN	1234
-#define __BIG_ENDIAN	4321
+#define __LITTLE_ENDIAN 1234
+#define __BIG_ENDIAN 4321
 
-#define __BYTE_ORDER	__LITTLE_ENDIAN
-
+#define __BYTE_ORDER __LITTLE_ENDIAN
 
 /*
  * Word Size
  */
 
-#define __32BIT_WORDS	32
-#define __64BIT_WORDS	64
+#define __32BIT_WORDS 32
+#define __64BIT_WORDS 64
 
-#define __WORD_SIZE	__64BIT_WORDS
+#define __WORD_SIZE __64BIT_WORDS
 
-#define CACHE_LINE_SIZE	64
+#define CACHE_LINE_SIZE 64
 
 #define MSR_PKG_ENERGY_STATUS 0x00000611
 
 #if defined(__i386__) || defined(__x86_64__)
 
-	#define cpu_relax() asm volatile("pause")
+#define cpu_relax() asm volatile("pause")
 
-	#define cpu_serialize() \
-		asm volatile("cpuid" : : : "%rax", "%rbx", "%rcx", "%rdx")
+#define cpu_serialize()  \
+    asm volatile("cpuid" \
+                 :       \
+                 :       \
+                 : "%rax", "%rbx", "%rcx", "%rdx")
 
-	static inline unsigned long rdtsc(void)
-	{
-		unsigned int a, d;
-		asm volatile("rdtsc" : "=a"(a), "=d"(d));
-		return ((unsigned long) a) | (((unsigned long) d) << 32);
-	}
+static inline unsigned long rdtsc(void) {
+    unsigned int a, d;
+    asm volatile("rdtsc"
+                 : "=a"(a), "=d"(d));
+    return ((unsigned long)a) | (((unsigned long)d) << 32);
+}
 
-	static inline unsigned long rdtscp(unsigned int *aux)
-	{
-		unsigned int a, d, c;
-		asm volatile("rdtscp" : "=a"(a), "=d"(d), "=c"(c));
-		if (aux)
-			*aux = c;
-		return ((unsigned long) a) | (((unsigned long) d) << 32);
-	}
+static inline unsigned long rdtscp(unsigned int *aux) {
+    unsigned int a, d, c;
+    asm volatile("rdtscp"
+                 : "=a"(a), "=d"(d), "=c"(c));
+    if (aux)
+        *aux = c;
+    return ((unsigned long)a) | (((unsigned long)d) << 32);
+}
 
-	static inline unsigned long rdmsr(unsigned int msr)
-	{
-		unsigned low, high;
+static inline unsigned long rdmsr(unsigned int msr) {
+    unsigned low, high;
 
-		asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-		return low | ((unsigned long)high << 32);
-	}
+    asm volatile("rdmsr"
+                 : "=a"(low), "=d"(high)
+                 : "c"(msr));
+    return low | ((unsigned long)high << 32);
+}
+
+static inline unsigned int intlog2(unsigned int x) {
+    unsigned int y;
+    asm("\tbsr %1, %0\n"
+        : "=r"(y)
+        : "r"(x));
+    return y;
+}
+
+static inline unsigned long longlog2(unsigned long x) {
+    unsigned long y;
+    asm("\tbsr %1, %0\n"
+        : "=r"(y)
+        : "r"(x));
+    return y;
+}
 
 #elif defined(__aarch64__)
 
-	#define cpu_relax() asm volatile("yield")
+#define cpu_relax() asm volatile("yield")
 
-	static inline unsigned long rdtsc(void)
-	{
-		unsigned long vt; 
-		asm volatile("mrs %0, cntvct_el0" : "=r"(vt));
-		return vt;
-	}
+static inline unsigned long rdtsc(void) {
+    unsigned long vt;
+    asm volatile("mrs %0, cntvct_el0"
+                 : "=r"(vt));
+    return vt;
+}
 
-	static inline unsigned long rdtscp(unsigned int *aux) // placeholder for now
-	{
-		unsigned long vt; 
-		asm volatile("isb;mrs %0, cntvct_el0" : "=r"(vt));
-		return vt;
-	}
+static inline unsigned long rdtscp(unsigned int *aux)  // placeholder for now
+{
+    unsigned long vt;
+    asm volatile("isb;mrs %0, cntvct_el0"
+                 : "=r"(vt));
+    return vt;
+}
+
+static inline unsigned int intlog2(int x) {
+    unsigned int y;
+    asm("\trbit %w[x], %w[x]\n"
+        "\tclz %w[y], %w[x]"
+        : [y] "+r"(y)
+        : [x] "r"(x));
+    return y;
+}
+
+static inline unsigned long longlog2(long x) {
+    unsigned long y;
+    asm("\trbit %x[x], %x[x]\n"
+        "\tclz %x[y], %x[x]"
+        : [y] "+r"(y)
+        : [x] "r"(x));
+    return y;
+}
 
 #endif

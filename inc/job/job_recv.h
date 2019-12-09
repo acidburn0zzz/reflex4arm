@@ -29,31 +29,40 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "zhelpers.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <unistd.h>
 #include <assert.h>
 #include <pthread.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include "job/zhelpers.h"
 
-#define MAX_NODES 4
+#define MAX_NODE_NUM 4
 #define NUM_OF_WORKER 8
 #define NUM_OF_ROUND 2
+#define MAX_REQ_LATENCY
+
+#define JOB_RECV_NEW 0x00
+#define JOB_RECV_DONE 0x01
+#define JOB_RECV_AGAIN -EAGAIN
+#define JOB_RECV_NONE -1
 
 // struct __attribute__((__packed__)) job_ctx {
 struct job_ctx {
-    unsigned long job_id;
+    unsigned long id;
     unsigned long part_id;
-    unsigned short job_dst;
+    unsigned short dst;  // dst id, from 0 to MAX_NODE_NUM
     // long job_dst; // 0xffffffff, support up to 64 storage node
     unsigned int latency_us_SLO;
     unsigned long IOPS_SLO;
     unsigned int rw_ratio_SLO;
+    unsigned int req_size;  // in lbas, 512 bytes in default
     unsigned int replicas;
     unsigned long duration;
-    unsigned long capacity;
+    unsigned long start_addr;
+    // unsigned long end_addr;
+    unsigned long capacity;  // in lbas, 512 bytes in default
     unsigned long MAX_IOPS;
     unsigned long MIN_IOPS;
     unsigned long delay;
@@ -62,11 +71,28 @@ struct job_ctx {
     bool read_once;
 };
 
-struct job_req {
-    unsigned int tid;
-    long avail_nodes; // 0xffffffff, prepresenting up to 64 stroage nodes
+struct job_metrics {
+    unsigned long job_id;
+    unsigned long part_id;
+    unsigned long avg;
+    unsigned long max;
+    unsigned long sent;
+    unsigned long measured_num;
+    unsigned long missed_sends;
+    unsigned long sent_time;
+    unsigned long start_time;
+    unsigned long measurements[MAX_REQ_LATENCY];
 };
 
-int req_jobs(void *req);
-int recv_jobs(void *req, int tid);
-void *worker(void *arg);
+struct job_req {
+    unsigned int tid;
+    long avail_nodes;  // 0xffffffff, prepresenting up to 64 stroage nodes
+    // struct job_metrics metrics;
+};
+
+int req_jobs(void *req, int job_nr);
+int recv_jobs(void *req, int tid, struct job_ctx *next_job);
+void job_worker_init(struct job_worker_ops ops);
+void *job_worker(void *arg);
+void *job_conn_init(int tid);
+void job_conn_destroy(int tid);

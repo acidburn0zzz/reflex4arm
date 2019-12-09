@@ -16,6 +16,7 @@ out.*
 /ix.conf
 /nvme_devname.devmodel
 /ix
+/cp/env
 /apps/echoclient
 /apps/echoserver
 /apps/reflex_server

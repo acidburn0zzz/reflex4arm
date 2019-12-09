@@ -60,7 +60,7 @@
 
 #include <ix/stddef.h>
 #include <ix/mempool.h>
-#include <lwip/lwipopts.h>
+#include <lwip/clwipopts.h>
 
 #include <pthread.h>
 #include <string.h>

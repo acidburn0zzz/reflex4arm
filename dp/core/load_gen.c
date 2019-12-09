@@ -32,3 +32,5 @@
 /*
  * load_gen.c - generating the workload for each job 
  */
+
+#include <job/load_gen.h>

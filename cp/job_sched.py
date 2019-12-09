@@ -31,16 +31,19 @@ NUM_OF_WORKER = 64
 
 class JobCtx(ctypes.Structure):
     _fields_ = [
-        ('job_id', ctypes.c_ulong),
+        ('id', ctypes.c_ulong),
         ('part_id', ctypes.c_ulong),
-        ('job_dst', ctypes.c_ushort),
+        ('dst', ctypes.c_ushort),
         # ('job_dst', ctypes.c_long), # 0xffffffff, not a good idea cos only support even job distribution
         ('latency_us_SLO', ctypes.c_uint),
         ('IOPS_SLO', ctypes.c_ulong), # splittable
         ('rw_ratio_SLO', ctypes.c_uint),
+        ('req_size', ctypes.c_uint),
         ('replicas', ctypes.c_uint),
         ('duration', ctypes.c_ulong),
-        ('capacity', ctypes.c_ulong), # in KB, splittale
+        ('start_addr', ctypes.c_ulong),
+        # ('end_addr', ctypes.c_ulong),
+        ('capacity', ctypes.c_ulong),
         ('MAX_IOPS', ctypes.c_ulong),
         ('MIN_IOPS', ctypes.c_ulong),
         ('delay_us', ctypes.c_ulong), # delay at scheduler or worker?
@@ -74,17 +77,22 @@ class JobReq(ctypes.Structure):
 #         socket.bind("tcp://*:5555")
 #     return socket
 
-def generate_jobs(job_nr):
+def dummy_generate_jobs(job_nr):
     dummy_job_queue = []
     for i in range(job_nr):
         new_job = JobCtx()
         new_job.job_id = i
         new_job.part_id = 0
-        new_job.latency_us_SLO = random.randint(100, 500)
+        new_job.req_size = random.randint(2, 32);
+        new_job.latency_us_SLO = random.randint(100, 1000)
         new_job.IOPS_SLO = random.randint(500, 100000)
         new_job.capacity = random.randint(1024, 64*1024*1024) # from 1 MB to 64 GB
         new_job.unifom = True
         new_job.sequential = random.choice([True, False])
+        if(i == 0):
+            new_job.start_addr = 0;
+        else:
+            new_job.start_addr = dummy_job_queue[i-1].start_addr + dummy_job_queue[i-1].capacity
         new_job.read_once = False
         dummy_job_queue += [new_job]
     return dummy_job_queue
@@ -93,11 +101,19 @@ def job_assign(sock, id, sub_jobs):
     """ send each job to its worker
     """
     job_nr = len(sub_jobs)
-    sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)]+[b'Done'])
+    # sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)])
+    sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)]+['Done])
     # sock.send_multipart([id, b'', b'TEST MSG'])
     # sock.send_multipart([id, bytes(sub_jobs[0])])
     # test_job = JobCtx()
     # sock.send_multipart([id, bytes(test_job)])
+
+class JobGenerator():
+    def __init__(self):
+        self.ns_size = None # Read the capacity of our stoage
+
+    def gen_new_job(self):
+        new_job = JobCtx()
 
 class JobQueue():
     def __init__(self, worker_id):
@@ -107,12 +123,15 @@ class JobQueue():
         self.generate_dummy(50)
 
     def pop(self):
+        if not self.dummy_job_queue:
+            return None
         return self.dummy_job_queue.pop()
 
     def generate_dummy(self, job_nr):
         for i in range(job_nr):
             new_job = JobCtx()
             new_job.job_id = i
+            new_job.req_size = random.randint(2, 16)
             new_job.latency_us_SLO = random.randint(100, 500)
             new_job.IOPS_SLO = random.randint(500, 100000)
             new_job.unifom = True
@@ -152,9 +171,14 @@ class Scheduler():
         """ (1) evenly split the first job to serveral sub-jobs
             (2) return the list of storage nodes
         """
-        print("I am scheduling with fcfs")   
+        print("I am scheduling with fcfs")
         job = self.queues[qid].pop()
         return self.split_job(job)
+
+    def sched_fcfs_no_split(self, qid):
+        """
+        """
+        print("I am scheduling with fcfs")
 
     def sched_sjf(self, qid):
         """ (1) sort the first [depth] jobs by their 
@@ -184,6 +208,7 @@ class Scheduler():
             sub_job.part_id = i
             sub_job.IOPS_SLO = int(job.IOPS_SLO / nodes_nr)
             sub_job.capacity = int(job.capacity / nodes_nr)
+            sub_job.start_addr = sub_job.start_addr + i * sub_job.capacity
             sub_job.job_dst = self.avail_nodes[i]
         return sub_jobs
 
