@@ -29,11 +29,14 @@ import ctypes
 
 NUM_OF_WORKER = 64
 
+APPROVED = 1
+DECLINED = -1
+
 class JobCtx(ctypes.Structure):
     _fields_ = [
         ('id', ctypes.c_ulong),
         ('part_id', ctypes.c_ulong),
-        ('dst', ctypes.c_ushort),
+        ('dst', ctypes.c_uint),
         # ('job_dst', ctypes.c_long), # 0xffffffff, not a good idea cos only support even job distribution
         ('latency_us_SLO', ctypes.c_uint),
         ('IOPS_SLO', ctypes.c_ulong), # splittable
@@ -64,6 +67,12 @@ class JobReq(ctypes.Structure):
         fit = min(len(bytes), ctypes.sizeof(self))
         ctypes.memmove(ctypes.addressof(self), bytes, fit)
 
+class JobRep(ctypes.Structure):
+    _fields_ = [
+        ('command', ctypes.c_int),
+        ('work_nodes', ctypes.c_long),
+    ]
+
 # def init_server(context, fair=False, sim=True):
 #     socket = None
     
@@ -81,7 +90,7 @@ def dummy_generate_jobs(job_nr):
     dummy_job_queue = []
     for i in range(job_nr):
         new_job = JobCtx()
-        new_job.job_id = i
+        new_job.id = i
         new_job.part_id = 0
         new_job.req_size = random.randint(2, 32);
         new_job.latency_us_SLO = random.randint(100, 1000)
@@ -97,12 +106,15 @@ def dummy_generate_jobs(job_nr):
         dummy_job_queue += [new_job]
     return dummy_job_queue
 
-def job_assign(sock, id, sub_jobs):
+def job_assign(sock, id, meta, sub_jobs):
     """ send each job to its worker
     """
     job_nr = len(sub_jobs)
     # sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)])
-    sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)]+['Done])
+    for sub_job in sub_jobs:
+        print('sub job:','id', sub_job.id, 'part:', sub_job.part_id, 'job_dst', sub_job.dst, 'IOPS', sub_job.IOPS_SLO)
+    # sock.send_multipart([id]+[bytes(sub_jobs[i]) for i in range(job_nr)]+[b'Done'])
+    sock.send_multipart([id, bytes(meta)]+[bytes(sub_jobs[i]) for i in range(job_nr)])
     # sock.send_multipart([id, b'', b'TEST MSG'])
     # sock.send_multipart([id, bytes(sub_jobs[0])])
     # test_job = JobCtx()
@@ -130,7 +142,7 @@ class JobQueue():
     def generate_dummy(self, job_nr):
         for i in range(job_nr):
             new_job = JobCtx()
-            new_job.job_id = i
+            new_job.id = i*(self.id+1)# different queues host different id
             new_job.req_size = random.randint(2, 16)
             new_job.latency_us_SLO = random.randint(100, 500)
             new_job.IOPS_SLO = random.randint(500, 100000)
@@ -209,7 +221,8 @@ class Scheduler():
             sub_job.IOPS_SLO = int(job.IOPS_SLO / nodes_nr)
             sub_job.capacity = int(job.capacity / nodes_nr)
             sub_job.start_addr = sub_job.start_addr + i * sub_job.capacity
-            sub_job.job_dst = self.avail_nodes[i]
+            sub_job.dst = self.avail_nodes[i]
+            # print('sub job:','id', sub_job.id, 'part:', sub_job.part_id, 'job_dst', sub_job.job_dst, 'IOPS', sub_job.IOPS_SLO)
         return sub_jobs
 
 if __name__ == '__main__':
@@ -241,12 +254,16 @@ if __name__ == '__main__':
             new_job_req = JobReq()
             new_job_req.receiveSome(request)
             # print("Avail nodes is: %s" % new_job_req.avail_nodes)
+            job_rep = JobRep()
+            job_rep.command = APPROVED
+            # jon_rep.work_nodes = int("0x0000ff", 0)
+            job_rep.work_nodes = new_job_req.avail_nodes
             # qid = new_job_req.tid
             print("The qid is", cur_qid)
             next_jobs = scheduler.sched(cur_qid)
-            print("The job id is", next_jobs[0].job_id)
+            print("The job id is", next_jobs[0].id)
             #  Send reply back to client
-            job_assign(backend, worker_id, next_jobs)
+            job_assign(backend, worker_id, job_rep, next_jobs)
 
     backend.close()
     context.term()

@@ -38,23 +38,47 @@
 static void *zmq_requesters[NUM_OF_WORKER];
 static void *zmq_contexts[NUM_OF_WORKER];
 
-int req_jobs(void *req, int job_nr) {
+unsigned int countSetBits(unsigned long n) {
+    unsigned int count = 0;
+    while (n) {
+        count += n & 1;
+        n >>= 1;
+    }
+    return count;
+}
+
+void req_a_job(void *req) {
     s_sendmore(req, "");
     struct job_req *jreq = malloc(sizeof *jreq);
+
     jreq->avail_nodes = 0x000f;
-    while (job_nr--)
-        zmq_send(req, jreq, sizeof(struct job_req), ZMQ_DONTWAIT);
+    zmq_send(req, jreq, sizeof(struct job_req), ZMQ_DONTWAIT);
 
     free(jreq);
-    return 0;
+}
+
+int recv_job_meta(void *req, struct job_rep *jrep) {
+    int ret, job_num;
+    ret = zmq_recv(req, jrep, sizeof(struct job_rep), ZMQ_DONTWAIT);
+    // printf("Ret is %d\n", ret);
+    if (ret == -EAGAIN)
+        return -1;
+    else if (ret == sizeof(struct job_rep)) {
+        job_num = countSetBits(jrep->work_nodes);
+        printf("We have job num of %d.\n", job_num);
+        free(jrep);
+        return job_num;
+    }
+    return -1;
 }
 
 // Non-blocking
-int recv_jobs(void *req, int tid, struct job_ctx *next_job) {
+int recv_a_job(void *req, int tid, struct job_ctx *next_job) {
     int i, ret;
     char *test;
 
     ret = zmq_recv(req, next_job, sizeof(struct job_ctx), ZMQ_DONTWAIT);
+
     switch (ret) {
         case sizeof(struct job_ctx):
             printf("[%d]Received JOB-%ld-%ld, IOPS_SLO is %ld, Job Dst is %d, req_size is %d\n",
@@ -70,14 +94,11 @@ int recv_jobs(void *req, int tid, struct job_ctx *next_job) {
             return JOB_RECV_AGAIN;
             break;
 
-        case JOB_RECV_NONE:
-            break;
-
         default:  // recv_less than a job
-            test = malloc(5);
-            test = &next_job;
-            printf("Ret: %d; Recv done msg - %s\n", ret, test);
-            return JOB_RECV_DONE;
+            // test = malloc(5);
+            // test = &next_job;
+            // printf("Ret: %d; Recv done msg - %s\n", ret, test);
+            // return JOB_RECV_DONE;
             break;
     }
     return JOB_RECV_AGAIN;
@@ -109,18 +130,28 @@ void *job_worker(void *arg) {
     for (round = 0; round != NUM_OF_ROUND; round++) {
         // FIXME: make non-blocking request
         printf("[%d]Request some jobs... round-%d\n", tid, round);
-        req_jobs(requester, 1);
-        struct job_ctx *new_jobs[MAX_NODE_NUM];
-        int job_nr = 0;
-        new_jobs[job_nr] = malloc(sizeof(struct job_ctx));
-        while (1) {
-            ret = recv_jobs(requester, tid, new_jobs[job_nr]);
+        req_a_job(requester);
+
+        int job_nr = -1;
+        int job_seq = 0;
+
+        struct job_rep *jrep = malloc(sizeof *jrep);
+        while (job_nr == -1) {
+            job_nr = recv_job_meta(requester, jrep);
+        }
+        struct job_ctx *new_jobs[job_nr];
+        for (i = 0; i < job_nr; i++)
+            new_jobs[i] = malloc(sizeof(struct job_ctx));
+        while (job_seq < job_nr) {
+            ret = recv_a_job(requester, tid, new_jobs[job_seq]);
             if (ret == JOB_RECV_NEW) {
-                job_nr++;
-                new_jobs[job_nr] = malloc(sizeof(struct job_ctx));
+                printf("Received a new job.\n");
+                job_seq++;
             }
-            if (ret == JOB_RECV_DONE)
+            if (ret == JOB_RECV_DONE) {
+                printf("Received job done.\n");
                 break;
+            }
         }
         for (i = 0; i < job_nr; ++i) {
             free(new_jobs[i]);
@@ -129,14 +160,13 @@ void *job_worker(void *arg) {
     job_conn_destroy(tid);
 }
 
-// int main()
-// {
+// int main() {
 //     unsigned long i;
 //     pthread_t thread_id;
 
 //     // Let us create eight threads
 //     for (i = 0; i < NUM_OF_WORKER; i++) {
-//     // for (i = 0; i < 1; i++) {
+//         // for (i = 0; i < 1; i++) {
 //         printf("Launching new thread %ld\n", i);
 //         pthread_create(&thread_id, NULL, job_worker, (void *)&i);
 //         sleep(1);

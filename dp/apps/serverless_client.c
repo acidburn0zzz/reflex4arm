@@ -129,9 +129,9 @@ static __thread struct mempool nvme_req_buf_pool;
 static __thread int req_qdepth = 0;
 static __thread int tid;
 static __thread int conn_opened = 0;
-static __thread int sent_job_nr = 0;
-static __thread int got_job_nr = 0;
-static __thread int ack_job_nr = 0;
+static __thread int sent_job_reqs = 0;
+static __thread int acked_job_reqs = 0;
+// static __thread int acked_job_nr = 0;
 static __thread int done_job_nr = 0;
 static __thread bool job_done = false;
 static __thread unsigned long run_time;
@@ -174,7 +174,7 @@ inline void mempool_free_4k(struct nvme_req *req) {
     int num4k = req->lba_count / 8;
     if (req->lba_count % 8 != 0)
         num4k++;
-    
+
     for (i = 0; i < num4k; i++)
         mempool_free(&nvme_req_buf_pool, req->buf[i]);
 }
@@ -367,7 +367,7 @@ int send_batched_reqs(struct pp_conn *conn) {
 
 inline void mempool_alloc_4k(struct nvme_req *req) {
     int i;
-    int num4k = req->lba_count / 8; // 4096 = 512*8
+    int num4k = req->lba_count / 8;  // 4096 = 512*8
     assert(num4k <= MAX_PAGES_PER_ACCESS);
     if (num4k % 8 != 0)
         num4k++;
@@ -375,9 +375,9 @@ inline void mempool_alloc_4k(struct nvme_req *req) {
     void *req_buf_array[num4k];
     for (i = 0; i < num4k; i++) {
         req_buf_array[i] = mempool_alloc(&nvme_req_buf_pool);
-        if(req_buf_array[i] == NULL) {
-			printf("ERROR: alloc of nvme_req_buf failed\n");
-			assert(0);
+        if (req_buf_array[i] == NULL) {
+            printf("ERROR: alloc of nvme_req_buf failed\n");
+            assert(0);
         }
         req->buf[i] = req_buf_array[i];
     }
@@ -583,35 +583,49 @@ static void *recv_loop(void *arg) {
     spin_unlock(&conn_id_bitmap_lock);
     pp_conn_init(&conns[conn_id], conn_id);
     struct job_ctx *new_job = &conns[conn_id]->job;
+    // new_job = malloc(sizeof(struct job_ctx));
+
     // = mempool_alloc(&job_pool);
     // concur_jobs[conn_id] = new_job;
 
     ret = JOB_RECV_AGAIN;
+    int current_job_nr = 0;
+    int acked_job_nr = 0;
+    struct job_rep *jrep = malloc(sizeof *jrep);
     while (1) {
         if (!job_done && MAX_THROUGHPUT_PER_CORE > current_throughput) {  // do we need a job qdepth to avoid too many job requests?
             unsigned long now = rdtsc();
             if (now > next_job_time) {
-                req_jobs(requester, 1);
-                sent_job_nr++;
-                job_done = (sent_job_nr >= job_nr_per_core);
+                req_a_job(requester);
+                sent_job_reqs++;
+                job_done = (sent_job_reqs >= job_nr_per_core);
                 next_job_time += cycles_between_jobs;
                 printf("Requested a job, next job time is %ld.\n", next_job_time);
                 if (job_done)
                     printf("Sent enough job reqs, stop requesting.\n");
             }
         }
+        if (acked_job_reqs < sent_job_reqs) {
+            current_job_nr = recv_job_meta(requester, jrep);
+            if (current_job_nr > 0) {
+                printf("Got a new new job rep.\n");
+                acked_job_reqs++;
+                acked_job_nr = 0;
+            }
+        }
 
-        if (ack_job_nr < sent_job_nr)
-            ret = recv_jobs(requester, tid, new_job);
+        if (acked_job_nr < current_job_nr)
+            ret = recv_a_job(requester, tid, new_job);
+
         if (ret == JOB_RECV_NEW) {
-            printf("Got new JOB_RECV_NEW.\n");
+            printf("Got a new JOB_RECV_NEW.\n");
             current_throughput += new_job->IOPS_SLO * new_job->req_size;
             struct ip_tuple *it = ip_tuple[new_job->dst];
             conns[conn_id]->seq_count = new_job->start_addr;
             it->src_port = (new_job->id * MAX_NODE_NUM + new_job->part_id + 1024) % MAX_PORT_NUM;  // avoid using duplicate src port
-            printf("dialing it %p.\n", it);
+            printf("dialing with ip tuple: dst_port-%d, src_port-%d.\n", it->dst_port, it->src_port);
             ixev_dial(conns[conn_id], it);
-            got_job_nr++;
+            acked_job_nr++;
 
             // Setup next connection
             spin_lock(&conn_id_bitmap_lock);
@@ -620,6 +634,7 @@ static void *recv_loop(void *arg) {
                 bitmap_set(conn_id_bitmap, conn_id);
                 pp_conn_init(&conns[conn_id], conn_id);
                 new_job = &conns[conn_id]->job;
+                // new_job = malloc(sizeof(struct job_ctx));
                 printf("Now the pointer of new_job is %p.\n", new_job);
                 // new_job = mempool_alloc(&job_pool);
                 // concur_jobs[conn_id] = new_job;
@@ -629,11 +644,7 @@ static void *recv_loop(void *arg) {
                 exit(-1);
             }
             spin_unlock(&conn_id_bitmap_lock);
-        } else if (ret == JOB_RECV_DONE) {
-            // printf("Identifying this as a single job completed. \n");
-            ack_job_nr++;
         }
-
         int i;
         for (i = 0; i < MAX_CONN_PER_CORE; i++)
             if (bitmap_test(conn_id_bitmap, i)) {

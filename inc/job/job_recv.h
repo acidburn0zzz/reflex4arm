@@ -39,8 +39,8 @@
 #include "job/zhelpers.h"
 
 #define MAX_NODE_NUM 4
-#define NUM_OF_WORKER 8
-#define NUM_OF_ROUND 2
+#define NUM_OF_WORKER 4
+#define NUM_OF_ROUND 20
 #define MAX_REQ_LATENCY
 
 #define JOB_RECV_NEW 0x00
@@ -52,7 +52,7 @@
 struct job_ctx {
     unsigned long id;
     unsigned long part_id;
-    unsigned short dst;  // dst id, from 0 to MAX_NODE_NUM
+    unsigned int dst;  // dst id, from 0 to MAX_NODE_NUM
     // long job_dst; // 0xffffffff, support up to 64 storage node
     unsigned int latency_us_SLO;
     unsigned long IOPS_SLO;
@@ -87,12 +87,18 @@ struct job_metrics {
 struct job_req {
     unsigned int tid;
     long avail_nodes;  // 0xffffffff, prepresenting up to 64 stroage nodes
-    // struct job_metrics metrics;
+                       // struct job_metrics metrics;
 };
 
-int req_jobs(void *req, int job_nr);
-int recv_jobs(void *req, int tid, struct job_ctx *next_job);
-void job_worker_init(struct job_worker_ops ops);
+struct job_rep {
+    int command;
+    long work_nodes;
+};
+
+void req_a_job(void *req);
+int recv_job_meta(void *req, struct job_rep *jrep);
+int recv_a_job(void *req, int tid, struct job_ctx *next_job);
+// void job_worker_init(struct job_worker_ops ops);
 void *job_worker(void *arg);
 void *job_conn_init(int tid);
 void job_conn_destroy(int tid);
