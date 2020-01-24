@@ -469,7 +469,7 @@ static void pp_dialed(struct ixev_ctx *ctx, long ret) {
     conn->alive = true;
 
     conn_opened++;
-    printf("Tenant %d is dialed. (conn_opened: %d).\n", tid, conn_opened);
+    printf("New conn at core %d is dialed. (conn_opened: %d).\n", tid, conn_opened);
 
     while (rdtsc() < now + 10000000) {
     }
@@ -589,7 +589,7 @@ static void *recv_loop(void *arg) {
     // concur_jobs[conn_id] = new_job;
 
     ret = JOB_RECV_AGAIN;
-    int current_job_nr = 0;
+    int pending_job_nr = 0;
     int acked_job_nr = 0;
     struct job_rep *jrep = malloc(sizeof *jrep);
     while (1) {
@@ -600,25 +600,29 @@ static void *recv_loop(void *arg) {
                 sent_job_reqs++;
                 job_done = (sent_job_reqs >= job_nr_per_core);
                 next_job_time += cycles_between_jobs;
-                printf("Requested a job, next job time is %ld.\n", next_job_time);
+                printf("[%d]: Requested a job (sent_job: %d), next job time is %ld.\n", tid, sent_job_reqs, next_job_time);
                 if (job_done)
                     printf("Sent enough job reqs, stop requesting.\n");
             }
         }
         if (acked_job_reqs < sent_job_reqs) {
-            current_job_nr = recv_job_meta(requester, jrep);
-            if (current_job_nr > 0) {
+            ret = recv_job_meta(requester, jrep);
+            if (ret > 0) {
                 printf("Got a new new job rep.\n");
+                pending_job_nr += ret;
                 acked_job_reqs++;
-                acked_job_nr = 0;
+                // acked_job_nr = 0;
             }
         }
 
-        if (acked_job_nr < current_job_nr)
+        if (acked_job_nr < pending_job_nr)
             ret = recv_a_job(requester, tid, new_job);
+        else
+            ret = JOB_RECV_NONE;
 
         if (ret == JOB_RECV_NEW) {
-            printf("Got a new JOB_RECV_NEW.\n");
+            printf("[%d]Got a new JOB_RECV_NEW.\n", tid);
+            printf("new_job->id is %d, new_job->part is %d\n", new_job->id, new_job->part_id);
             current_throughput += new_job->IOPS_SLO * new_job->req_size;
             struct ip_tuple *it = ip_tuple[new_job->dst];
             conns[conn_id]->seq_count = new_job->start_addr;
@@ -626,6 +630,7 @@ static void *recv_loop(void *arg) {
             printf("dialing with ip tuple: dst_port-%d, src_port-%d.\n", it->dst_port, it->src_port);
             ixev_dial(conns[conn_id], it);
             acked_job_nr++;
+            printf("acked_job_nr/pending_job_nr: %d/%d\n", acked_job_nr, pending_job_nr);
 
             // Setup next connection
             spin_lock(&conn_id_bitmap_lock);
@@ -677,6 +682,10 @@ int serverless_client_main(int argc, char *argv[]) {
             case 'n':
                 total_job_nr = atoi(optarg);
                 job_nr_per_core = total_job_nr / cpus_active;
+                if (total_job_nr < cpus_active) {
+                    printf("You must request jobs more than cores.\n");
+                    exit(-1);
+                }
                 break;
             case 'h':
                 fprintf(stderr,
@@ -728,9 +737,11 @@ int serverless_client_main(int argc, char *argv[]) {
     if (ret)
         ixev_exit(IXEV_EXIT_FAILURE, "unable to create datastore.\n");
 
-    ret = mempool_create_datastore(&nvme_req_buf_datastore,
-                                   OUTSTANDING_REQS * 2,
-                                   PAGE_SIZE, "nvme_req_buf");
+    ret = mempool_create_datastore_align(
+        &nvme_req_buf_datastore,
+        OUTSTANDING_REQS * 2,
+        PAGE_SIZE,
+        "nvme_req_buf");
     if (ret)
         ixev_exit(IXEV_EXIT_FAILURE, "unable to create datastore.\n");
 

@@ -28,6 +28,7 @@ import copy
 import ctypes
 
 NUM_OF_WORKER = 64
+avail_nodes = [0, 1, 2, 3]
 
 APPROVED = 1
 DECLINED = -1
@@ -231,7 +232,6 @@ if __name__ == '__main__':
     context = zmq.Context()
     backend = context.socket(zmq.ROUTER)
     backend.bind("ipc:///tmp/job_backend")
-    avail_nodes = [0, 1, 2, 3]
     poller = zmq.Poller()
     # Only poll for requests from backend until workers are available
     poller.register(backend, zmq.POLLIN)

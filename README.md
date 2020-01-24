@@ -237,6 +237,18 @@ Depending on which workload you are using, we suggest the following changes to g
 
 Please also check the TCP tuning at [lwIP wiki](https://lwip.fandom.com/wiki/Tuning_TCP).
 
+## Serverless Scheduler
+
+Our most recent work focuses on bringing flash disaggregation to serverless envinronment. A control plane scheduler is responsible to generate workloads of jobs and schedule them to maximize the capability of the disaggregated storage node. In the client machine, you can switch to *serverless* branch to begin your tests.
+
+```
+git branch serverless
+make
+
+taskset -c [cpu id] python3 cp/job_sched.py & # running the scheduler in the background
+sudo ./ix -s 10.10.66.3 -n 400
+```
+The default workloads is located at `dp/apps/sample.workload`, you can adjust the paramters inside to test our scheduler. We will support more realistic workloads in the near future.
 
 ## Reference
 
