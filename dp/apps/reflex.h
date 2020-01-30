@@ -64,9 +64,17 @@ typedef struct __attribute__((__packed__)) {
     unsigned short magic;
     unsigned short opcode;
     void *req_handle;
-    unsigned long lba;       // IOPS_SLO
-    unsigned int lba_count;  // 0xffffff00: latency_SLO; 0x000000ff: rd_wr_ratio_SLO
-
+    union {
+        unsigned long lba;  // IOPS_SLO
+        unsigned long SLO_IOPS;
+    };
+    union {
+        unsigned int lba_count;
+        struct {
+            unsigned short latency;
+            unsigned short rw_ratio;
+        } SLO_;
+    };
 } binary_header_blk_t;
 
 void *pp_main(void *arg);

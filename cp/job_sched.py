@@ -95,9 +95,10 @@ def dummy_generate_jobs(job_nr):
         new_job.part_id = 0
         new_job.req_size = random.randint(2, 32);
         new_job.latency_us_SLO = random.randint(100, 1000)
-        new_job.IOPS_SLO = random.randint(500, 100000)
+        new_job.IOPS_SLO = random.randint(500, 10000)
         new_job.capacity = random.randint(1024, 64*1024*1024) # from 1 MB to 64 GB
         new_job.unifom = True
+        new_job.rw_ratio_SLO = 100 # All GET for now
         new_job.sequential = random.choice([True, False])
         if(i == 0):
             new_job.start_addr = 0;
@@ -143,10 +144,10 @@ class JobQueue():
     def generate_dummy(self, job_nr):
         for i in range(job_nr):
             new_job = JobCtx()
-            new_job.id = i*(self.id+1)# different queues host different id
+            new_job.id = self.id*job_nr+i# different queues host different id
             new_job.req_size = random.randint(2, 16)
             new_job.latency_us_SLO = random.randint(100, 500)
-            new_job.IOPS_SLO = random.randint(500, 100000)
+            new_job.IOPS_SLO = random.randint(500, 10000)
             new_job.unifom = True
             new_job.sequential = random.choice([True, False])
             new_job.read_once = False

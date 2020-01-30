@@ -75,12 +75,12 @@ struct nvme_req {
     int curr_buf;
 };
 
-struct pp_conn {  // separte for workload lib
+struct pp_conn {          // separte for workload lib
+    struct ixev_ctx ctx;  // must be the first member
     unsigned int id;
-    struct ixev_ctx ctx;
-    size_t rx_received;  //the amount of data received/sent for the current ReFlex request
+    size_t rx_received;
     size_t tx_sent;
-    bool rx_pending;  //is there a ReFlex req currently being received/sent
+    bool rx_pending;
     bool tx_pending;
     bool alive;
     int nvme_pending;
@@ -272,21 +272,26 @@ static void receive_req(struct pp_conn *conn) {
     }
 }
 
-int send_a_req(struct nvme_req *req) {
+inline void send_header(struct nvme_req *req) {
     struct pp_conn *conn = req->conn;
+    struct job_ctx *job = &conn->job;
     int ret = 0;
     BINARY_HEADER *header;
-
     assert(conn);
-
     if (!conn->tx_pending) {
         //setup header
         header = (BINARY_HEADER *)&conn->data_send[0];
         header->magic = sizeof(BINARY_HEADER);
-        header->opcode = req->cmd;
-        header->lba = req->lba;
-        header->lba_count = req->lba_count;
-        header->req_handle = req;
+        if (unlikely(req->cmd == CMD_REG)) {
+            header->SLO_.latency = job->latency_us_SLO;
+            header->SLO_.rw_ratio = job->rw_ratio_SLO;
+            header->SLO_IOPS = job->IOPS_SLO;
+        } else {
+            header->opcode = req->cmd;
+            header->lba = req->lba;
+            header->lba_count = req->lba_count;
+            header->req_handle = req;
+        }
 
         while (conn->tx_sent < sizeof(BINARY_HEADER)) {
             ret = ixev_send(&conn->ctx, &conn->data_send[conn->tx_sent],
@@ -314,7 +319,13 @@ int send_a_req(struct nvme_req *req) {
         conn->tx_pending = true;
         conn->tx_sent = 0;
     }
-    ret = 0;
+}
+
+int send_a_req(struct nvme_req *req) {
+    struct pp_conn *conn = req->conn;
+    int ret = 0;
+
+    send_header(req);
     // send request first, then send write data
     if (req->cmd == CMD_SET) {
         while (conn->tx_sent < req->lba_count * ns_sector_size) {
@@ -442,6 +453,15 @@ void req_generator(void *arg, int num_req) {
     int ret = send_batched_reqs(conn);
 }
 
+inline void register_job(struct pp_conn *conn) {
+    struct nvme_req *req = mempool_alloc(&nvme_req_pool);
+    struct job_ctx *job = &conn->job;
+
+    ixev_nvme_req_ctx_init(&req->ctx);
+    req->cmd = CMD_REG;
+    send_header(req);
+}
+
 static void main_handler(struct ixev_ctx *ctx, unsigned int reason) {
     struct pp_conn *conn = container_of(ctx, struct pp_conn, ctx);
     int ret;
@@ -469,7 +489,8 @@ static void pp_dialed(struct ixev_ctx *ctx, long ret) {
     conn->alive = true;
 
     conn_opened++;
-    printf("New conn at core %d is dialed. (conn_opened: %d).\n", tid, conn_opened);
+    printf("New conn %u at core %d is dialed. (conn_opened: %d).\n", conn->id, tid, conn_opened);
+    // register_job(conn); // commented for now
 
     while (rdtsc() < now + 10000000) {
     }
@@ -534,9 +555,9 @@ inline void pp_conn_close(struct pp_conn *conn) {
     current_throughput -= conn->job.IOPS_SLO * conn->job.req_size;
     // mempool_free(&job_pool, conn->job);
     mempool_free(&pp_conn_pool, conn);
-    spin_lock(&conn_id_bitmap_lock);
+    // spin_lock(&conn_id_bitmap_lock);
     bitmap_clear(conn_id_bitmap, conn->id);
-    spin_unlock(&conn_id_bitmap_lock);
+    // spin_unlock(&conn_id_bitmap_lock);
     // free datastore
 }
 
@@ -576,11 +597,11 @@ static void *recv_loop(void *arg) {
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
     unsigned long next_job_time = rdtsc();
-    spin_lock(&conn_id_bitmap_lock);
+    // spin_lock(&conn_id_bitmap_lock);
     conn_id = bitmap_first_zero(conn_id_bitmap, MAX_CONN_PER_CORE);
     assert(conn_id >= 0);
     bitmap_set(conn_id_bitmap, conn_id);
-    spin_unlock(&conn_id_bitmap_lock);
+    // spin_unlock(&conn_id_bitmap_lock);
     pp_conn_init(&conns[conn_id], conn_id);
     struct job_ctx *new_job = &conns[conn_id]->job;
     // new_job = malloc(sizeof(struct job_ctx));
@@ -605,7 +626,7 @@ static void *recv_loop(void *arg) {
                     printf("Sent enough job reqs, stop requesting.\n");
             }
         }
-        if (acked_job_reqs < sent_job_reqs) {
+        if (acked_job_nr == pending_job_nr && acked_job_reqs < sent_job_reqs) {
             ret = recv_job_meta(requester, jrep);
             if (ret > 0) {
                 printf("Got a new new job rep.\n");
@@ -613,12 +634,10 @@ static void *recv_loop(void *arg) {
                 acked_job_reqs++;
                 // acked_job_nr = 0;
             }
-        }
-
-        if (acked_job_nr < pending_job_nr)
+        } else if (acked_job_nr < pending_job_nr)
             ret = recv_a_job(requester, tid, new_job);
         else
-            ret = JOB_RECV_NONE;
+            ret = JOB_RECV_AGAIN;
 
         if (ret == JOB_RECV_NEW) {
             printf("[%d]Got a new JOB_RECV_NEW.\n", tid);
@@ -627,13 +646,13 @@ static void *recv_loop(void *arg) {
             struct ip_tuple *it = ip_tuple[new_job->dst];
             conns[conn_id]->seq_count = new_job->start_addr;
             it->src_port = (new_job->id * MAX_NODE_NUM + new_job->part_id + 1024) % MAX_PORT_NUM;  // avoid using duplicate src port
-            printf("dialing with ip tuple: dst_port-%d, src_port-%d.\n", it->dst_port, it->src_port);
+            printf("conn_id-%u :dialing with ip tuple: dst_port-%d, src_port-%d.\n", conn_id, it->dst_port, it->src_port);
             ixev_dial(conns[conn_id], it);
             acked_job_nr++;
             printf("acked_job_nr/pending_job_nr: %d/%d\n", acked_job_nr, pending_job_nr);
 
             // Setup next connection
-            spin_lock(&conn_id_bitmap_lock);
+            // spin_lock(&conn_id_bitmap_lock);
             conn_id = bitmap_first_zero(conn_id_bitmap, MAX_CONN_PER_CORE);
             if (conn_id >= 0) {
                 bitmap_set(conn_id_bitmap, conn_id);
@@ -648,14 +667,16 @@ static void *recv_loop(void *arg) {
                 printf("[%d] Resouces unavailable, job rejected.\n", tid);
                 exit(-1);
             }
-            spin_unlock(&conn_id_bitmap_lock);
+            // spin_unlock(&conn_id_bitmap_lock);
         }
-        int i;
+        unsigned int i;
         for (i = 0; i < MAX_CONN_PER_CORE; i++)
             if (bitmap_test(conn_id_bitmap, i)) {
                 assert(conns[i]);
-                if (conns[i]->alive)
+                if (conns[i]->alive) {
+                    // assert(0);
                     req_generator(&conns[i]->ctx, req_qdepth);
+                }
             }
         ixev_wait();
 
